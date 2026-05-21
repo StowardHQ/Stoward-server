@@ -29,7 +29,7 @@ async fn main() {
         .route("/api/servers/:sid/bump", post(handlers::bump_server))
         .route(
             "/api/servers/:sid",
-            axum::routing::patch(handlers::patch_server),
+            axum::routing::patch(handlers::patch_server).delete(handlers::delist_server),
         )
         .route_layer(axum_middleware::from_fn_with_state(
             master_api_key,

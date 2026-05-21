@@ -50,6 +50,11 @@ pub struct PatchServerInput {
     pub description: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct DelistServerInput {
+    pub owner_id: String,
+}
+
 // Check if listing is banned
 fn check_if_banned(conn: &Connection, server_id: &str) -> Result<(), (StatusCode, String)> {
     let is_banned: Option<i64> = conn
@@ -239,6 +244,55 @@ pub async fn sync_server(
         )),
         Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
     }
+}
+
+// DELETE /api/servers/:sid
+pub async fn delist_server(
+    State(db): State<DbState>,
+    headers: HeaderMap,
+    Path(sid): Path<String>,
+    Json(payload): Json<DelistServerInput>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    authorize_request(&headers)?;
+
+    let conn = db.lock().unwrap();
+
+    let stored_owner_id: Option<String> = conn
+        .query_row(
+            "SELECT owner_id FROM servers WHERE server_id = ?",
+            [&sid],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    match stored_owner_id {
+        Some(actual_owner) => {
+            if actual_owner.is_empty() {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "This server does not have an owner assigned and cannot be verified."
+                        .to_string(),
+                ));
+            }
+            if actual_owner != payload.owner_id {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "Forbidden: Only the server owner can delist this server.".to_string(),
+                ));
+            }
+        }
+        None => {
+            return Err((StatusCode::NOT_FOUND, "Server not found.".to_string()));
+        }
+    }
+
+    conn.execute("DELETE FROM servers WHERE server_id = ?", [&sid])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(
+        serde_json::json!({ "message": "Server successfully delisted." }),
+    ))
 }
 
 // POST /api/servers/:sid/bump
