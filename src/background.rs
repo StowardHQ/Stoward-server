@@ -22,6 +22,7 @@ struct StoatBanner {
 struct StoatServerResponse {
     #[serde(rename = "name")]
     server_name: String,
+    description: Option<String>,
     #[serde(rename = "icon")]
     server_icon: Option<StoatIcon>,
     #[serde(rename = "banner")]
@@ -78,6 +79,7 @@ pub async fn start_refresh_job(db: DbState) {
             let server_url = format!("https://stoat.chat/api/servers/{}", server_id);
 
             let mut synced_name = None;
+            let mut synced_description = None;
             let mut synced_icon = None;
             let mut synced_banner = None;
             let mut synced_owner_id = None;
@@ -87,6 +89,7 @@ pub async fn start_refresh_job(db: DbState) {
                     if resp.status().is_success() {
                         if let Ok(data) = resp.json::<StoatServerResponse>().await {
                             synced_name = Some(data.server_name);
+                            synced_description = data.description;
                             synced_icon = data.server_icon.map(|i| {
                                 format!(
                                     "https://cdn.stoatusercontent.com/icons/{}?max_side=256",
@@ -145,6 +148,7 @@ pub async fn start_refresh_job(db: DbState) {
             let _ = conn.execute(
                 "UPDATE servers SET 
                     server_name = COALESCE(?, server_name),
+                    description = COALESCE(?, description),
                     icon_url = COALESCE(?, icon_url),
                     banner_url = COALESCE(?, banner_url),
                     owner_id = COALESCE(?, owner_id),
@@ -153,6 +157,7 @@ pub async fn start_refresh_job(db: DbState) {
                  WHERE server_id = ?",
                 params![
                     synced_name,
+                    synced_description,
                     synced_icon,
                     synced_banner,
                     synced_owner_id,
