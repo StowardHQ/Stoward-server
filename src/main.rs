@@ -39,6 +39,7 @@ async fn main() {
     let app = Router::new()
         .route("/api/servers", get(handlers::get_servers))
         .route("/api/servers/:sid", get(handlers::get_server_by_id))
+        .route("/api/stats", get(handlers::get_stats))
         .merge(authenticated_routes)
         .layer(CorsLayer::permissive())
         .with_state(shared_db);

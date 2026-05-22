@@ -55,6 +55,12 @@ pub struct DelistServerInput {
     pub owner_id: String,
 }
 
+#[derive(Serialize, Clone)]
+pub struct DiscoveryStats {
+    pub total_servers: i64,
+    pub total_members: i64,
+}
+
 // Check if listing is banned
 fn check_if_banned(conn: &Connection, server_id: &str) -> Result<(), (StatusCode, String)> {
     let is_banned: Option<i64> = conn
@@ -95,6 +101,29 @@ fn authorize_request(headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
 
     Ok(())
 }
+
+// GET /api/stats
+pub async fn get_stats(
+    State(db): State<DbState>,
+) -> Result<Json<DiscoveryStats>, (StatusCode, String)> {
+    let conn = db.lock().unwrap();
+
+    let stats = conn
+        .query_row(
+            "SELECT COUNT(*), COALESCE(SUM(members), 0) FROM servers WHERE is_banned = 0",
+            [],
+            |row| {
+                Ok(DiscoveryStats {
+                    total_servers: row.get(0)?,
+                    total_members: row.get(1)?,
+                })
+            },
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(stats))
+}
+
 // GET /api/servers
 pub async fn get_servers(
     State(db): State<DbState>,
