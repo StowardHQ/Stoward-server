@@ -8,8 +8,13 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use crate::db::DbState;
+
+pub static SITEMAP_NEEDS_UPDATE: AtomicBool = AtomicBool::new(true);
+static mut SITEMAP_CACHE: Option<(String, Instant)> = None;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Server {
@@ -268,9 +273,12 @@ pub async fn sync_server(
     );
 
     match res {
-        Ok(_) => Ok(Json(
-            serde_json::json!({ "message": "Server listing synced successfully." }),
-        )),
+        Ok(_) => {
+            SITEMAP_NEEDS_UPDATE.store(true, Ordering::Relaxed);
+            Ok(Json(
+                serde_json::json!({ "message": "Server listing synced successfully." }),
+            ))
+        }
         Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
     }
 }
@@ -319,6 +327,7 @@ pub async fn delist_server(
     conn.execute("DELETE FROM servers WHERE server_id = ?", [&sid])
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    SITEMAP_NEEDS_UPDATE.store(true, Ordering::Relaxed);
     Ok(Json(
         serde_json::json!({ "message": "Server successfully delisted." }),
     ))
@@ -420,4 +429,71 @@ pub async fn patch_server(
         )),
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     }
+}
+
+// SEO stuff
+// GET /sitemap.xml
+pub async fn get_sitemap(
+    State(db): State<DbState>,
+) -> Result<(HeaderMap, String), (StatusCode, String)> {
+    let now_instant = Instant::now();
+
+    if !SITEMAP_NEEDS_UPDATE.load(Ordering::Relaxed) {
+        unsafe {
+            if let Some((ref cached_xml, _)) = SITEMAP_CACHE {
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::HeaderValue::from_static("application/xml"),
+                );
+                return Ok((headers, cached_xml.clone()));
+            }
+        }
+    }
+
+    let conn = db.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT server_id, last_bumped FROM servers WHERE is_banned = 0")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let server_rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let base_url = "https://stoward.space";
+    let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n");
+
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    for route in &["", "/add-server"] {
+        xml.push_str(&format!(
+            "  <url>\n    <loc>{}{}</loc>\n    <lastmod>{}</lastmod>\n    <priority>1.0</priority>\n  </url>\n",
+            base_url, route, today
+        ));
+    }
+
+    for (sid, last_bumped) in server_rows.flatten() {
+        let iso_date = last_bumped.replace(' ', "T") + "Z";
+
+        xml.push_str(&format!(
+            "  <url>\n    <loc>{}/server/{}</loc>\n    <lastmod>{}</lastmod>\n    <priority>0.8</priority>\n  </url>\n",
+            base_url, sid, iso_date
+        ));
+    }
+    xml.push_str("</urlset>");
+
+    SITEMAP_NEEDS_UPDATE.store(false, Ordering::Relaxed);
+    unsafe {
+        SITEMAP_CACHE = Some((xml.clone(), now_instant));
+    }
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/xml"),
+    );
+
+    Ok((headers, xml))
 }
