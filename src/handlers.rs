@@ -475,7 +475,10 @@ pub async fn get_sitemap(
     }
 
     for (sid, last_bumped) in server_rows.flatten() {
-        let iso_date = last_bumped.replace(' ', "T") + "Z";
+        let mut iso_date = last_bumped.replace(' ', "T");
+        if !iso_date.ends_with('Z') {
+            iso_date.push('Z');
+        }
 
         xml.push_str(&format!(
             "  <url>\n    <loc>{}/server/{}</loc>\n    <lastmod>{}</lastmod>\n    <priority>0.8</priority>\n  </url>\n",
