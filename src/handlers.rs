@@ -467,7 +467,7 @@ pub async fn get_sitemap(
     xml.push_str("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n");
 
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    for route in &["", "/add-server"] {
+    for route in &["", "/add-server", "/docs"] {
         xml.push_str(&format!(
             "  <url>\n    <loc>{}{}</loc>\n    <lastmod>{}</lastmod>\n    <priority>1.0</priority>\n  </url>\n",
             base_url, route, today
